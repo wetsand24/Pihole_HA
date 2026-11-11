@@ -1,0 +1,2 @@
+#!/bin/bash
+dig @127.0.0.1 pi.hole +short +time=1 +tries=1 | grep -qE '^[0-9.]+$'
