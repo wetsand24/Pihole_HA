@@ -1,0 +1,50 @@
+#!/bin/bash
+PEER=10.37.0.42
+FLOATING=10.37.0.40
+INTERFACE=eth0
+# pihole-sync: copies Pi-hole settings (adlists, allow/deny lists, local DNS, groups,
+# clients, config) from the main Pi-hole to the standby, using Pi-hole's own Teleporter API.
+# Change the three lines above. Put your Pi-hole web password in /root/.pihole-sync.secret
+# (chmod 600). Run it on the MAIN Pi-hole only. It does nothing unless this Pi-hole holds
+# the floating IP, so the sync never runs backwards after a failover.
+# Needs: curl, jq. Tested on Pi-hole v6 (Core 6.5, FTL 6.8).
+S=/root/.pihole-sync.secret
+LOG=/var/log/pihole-sync.log
+STATE=/var/lib/pihole-sync.adlists
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+log(){ echo "$(date '+%F %T') $*" >> "$LOG"; tail -n 300 "$LOG" > "$LOG.tmp" && cat "$LOG.tmp" > "$LOG"; rm -f "$LOG.tmp"; }
+
+ip -4 -br addr show "$INTERFACE" | grep -q "$FLOATING/" || { log "skip: not holding $FLOATING"; exit 0; }
+
+# Log in with the web password. If Pi-hole has no password set, its API is open.
+login(){ jq -n --rawfile p "$S" '{password:($p|rtrimstr("\n"))}' | curl -s -m 15 -X POST "http://$1/api/auth" -H 'Content-Type: application/json' --data @- | jq -r '.session.sid // empty'; }
+open_api(){ [ "$(curl -s -m 10 "http://$1/api/auth" | jq -r '.session.valid')" = "true" ]; }
+auth(){ local s; [ -r "$S" ] && s=$(login "$1"); if [ -n "$s" ]; then echo "$s"; elif open_api "$1"; then echo OPEN; fi; }
+
+A=$(auth 127.0.0.1); B=$(auth "$PEER")
+[ -n "$A" ] && [ -n "$B" ] || { log "FAIL: login (main ok=${A:+yes} standby ok=${B:+yes}), check $S"; exit 1; }
+aH=(); [ "$A" != OPEN ] && aH=(-H "X-FTL-SID: $A")
+bH=(); [ "$B" != OPEN ] && bH=(-H "X-FTL-SID: $B")
+logout(){ [ "$A" != OPEN ] && curl -s -m 5 -X DELETE "${aH[@]}" http://127.0.0.1/api/auth >/dev/null; [ "$B" != OPEN ] && curl -s -m 5 -X DELETE "${bH[@]}" "http://$PEER/api/auth" >/dev/null; }
+Z=$(mktemp /tmp/pihole-sync.XXXXXX); trap 'rm -f "$Z"; logout' EXIT
+
+# Export from the main Pi-hole
+curl -s -m 60 "${aH[@]}" http://127.0.0.1/api/teleporter -o "$Z" || { log "FAIL: export"; exit 1; }
+[ "$(stat -c %s "$Z")" -gt 1000 ] || { log "FAIL: export too small"; exit 1; }
+
+# Import into the standby (everything except DHCP leases). The upload must be named *.zip.
+OPT='{"config":true,"dhcp_leases":false,"gravity":{"group":true,"adlist":true,"adlist_by_group":true,"domainlist":true,"domainlist_by_group":true,"client":true,"client_by_group":true}}'
+R=$(curl -s -m 90 -X POST "${bH[@]}" "http://$PEER/api/teleporter" -F "file=@$Z;type=application/zip;filename=teleporter.zip" -F "import=$OPT")
+echo "$R" | jq -e '.files' >/dev/null 2>&1 || { log "FAIL: import: $(echo "$R" | cut -c1-200)"; exit 1; }
+
+# If the adlists changed, rebuild the standby's blocklist (gravity)
+H=$(curl -s -m 15 "${aH[@]}" http://127.0.0.1/api/lists | jq -S -c '[.lists[]|{address,type,enabled}]|sort_by(.address)' | sha256sum | cut -d' ' -f1)
+if [ "$H" != "$(cat "$STATE" 2>/dev/null)" ]; then
+  sleep 15; B2=$(auth "$PEER"); gH=(); [ -n "$B2" ] && [ "$B2" != OPEN ] && gH=(-H "X-FTL-SID: $B2")
+  if [ -n "$B2" ]; then
+    curl -s -m 900 -X POST "${gH[@]}" "http://$PEER/api/action/gravity" >/dev/null
+    [ "$B2" != OPEN ] && curl -s -m 5 -X DELETE "${gH[@]}" "http://$PEER/api/auth" >/dev/null
+    echo "$H" > "$STATE"; log "ok: synced, adlists changed, standby blocklist rebuilt"
+  else log "WARN: synced, but could not log in to rebuild the standby blocklist"; fi
+else log "ok: synced"; fi
