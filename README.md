@@ -14,6 +14,8 @@ Every command and file from the video, in order. The addresses below are the one
 
 Replace them with yours.
 
+▶️ Video: https://youtu.be/UDNSbAFTXxQ
+
 ## What you need
 - Two Pi-holes (v6) on **two separate machines**, each with a static IP and the same web password.
   Not set up yet? Follow [Pihole_Install](https://github.com/wetsand24/Pihole_Install) twice.
