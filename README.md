@@ -82,6 +82,19 @@ ip -br a
 ```
 pihole1 now shows two addresses: its own and the floating IP.
 
+What the important lines do:
+
+| Line | What it does |
+|---|---|
+| `interval 2` | runs the health check every 2 seconds |
+| `fall 3` | it has to fail 3 times in a row before it counts (about 6 s) |
+| `weight -100` | a failed check takes 100 off this Pi-hole's priority |
+| `priority 150` | the higher priority holds the floating IP (the standby has 100, so 150 - 100 = 50 loses) |
+| `preempt_delay 30` | after a failure, the main one waits 30 s before taking the IP back, so Pi-hole is fully started |
+| `unicast_src_ip` / `unicast_peer` | this Pi-hole's own IP / the other Pi-hole's IP |
+| `virtual_ipaddress` | the floating IP |
+| `interface` | your network card name from step 1 |
+
 ## 4. keepalived on pihole2 (standby)
 Paste [keepalived-pihole2.conf](keepalived-pihole2.conf). Three differences from pihole1:
 - `priority 100` (lower than 150)
@@ -126,11 +139,17 @@ Run it and check the log:
 pihole-sync
 tail -n 1 /var/log/pihole-sync.log
 ```
+You should see `ok: synced`. The first run takes about 20 seconds, because it also rebuilds the standby's blocklist
+(the log then says `ok: synced, adlists changed, standby blocklist rebuilt`).
+
+Check it worked: block a test domain on the main Pi-hole (Domains, add it to the deny list), run `pihole-sync`,
+then refresh the Domains page on the standby. The domain is there.
+
 Run it every hour, at 17 minutes past:
 ```bash
 echo "17 * * * * root /usr/local/bin/pihole-sync" > /etc/cron.d/pihole-sync
 ```
-The script only runs while this Pi-hole holds the floating IP, so it never copies the standby's settings back
+The script only runs while this Pi-hole holds the floating IP (otherwise the log says `skip: not holding 10.37.0.40`), so it never copies the standby's settings back
 over the main one after a failover. Make your changes on the main Pi-hole; changes on the standby get replaced.
 
 Prefer Docker? [Nebula Sync](https://github.com/lovelaze/nebula-sync) does the same job.
@@ -149,11 +168,23 @@ On a Pi-hole with a static address, taking the link down also drops its default 
 **Test 2, only Pi-hole stops.** On pihole1: `systemctl stop pihole-FTL`. The health check fails 3 times
 (about 6 s), and pihole2 takes over. `systemctl start pihole-FTL` to bring it back.
 
+## Troubleshooting
+- **The standby never takes over when Pi-hole stops.** On the main one, stop Pi-hole and run `chk-ftl; echo $?`.
+  It has to print `1`. If it prints `0`, the check isn't working.
+- **Both Pi-holes show the floating IP.** They can't hear each other's heartbeats. Check `unicast_src_ip` and
+  `unicast_peer` on both, and that no firewall between them blocks VRRP (IP protocol 112).
+  `journalctl -u keepalived -n 50` shows what keepalived is doing.
+- **The standby waits about 40 seconds before taking over.** The standby has a `preempt_delay` line. Delete it there.
+- **`FAIL: login` in the sync log.** The password in `/root/.pihole-sync.secret` doesn't match the web password
+  of one of the Pi-holes. Both need the same password.
+- **Back on the network but no internet after Test 1.** Taking the link down drops the default route, see Test 1.
+
 ## Good to know
 - Two separate machines. Two Pi-holes on one computer go down together, and a power cut takes both, so this
   doesn't replace a UPS.
 - Each Pi-hole keeps its own query log and statistics.
 - This only protects DNS. Anything else on the dead server stays down.
+- Tested in the video on Debian 12.12, Pi-hole Core 6.5 / FTL 6.8 / Web 6.6.1 and keepalived 2.2.7.
 
 ## Files
 | File | Goes to |
