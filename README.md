@@ -141,6 +141,8 @@ while ($true) { $t = Get-Date -Format HH:mm:ss; try { $r = Resolve-DnsName googl
 **Test 1, the machine loses its network.** On pihole1: `ip link set eth0 down`. Lookups pause for a few
 seconds, then pihole2 answers and `ip -br a` on pihole2 shows the floating IP. Bring it back with
 `ip link set eth0 up` (from the console). After the 30 s `preempt_delay`, pihole1 takes the IP back.
+On a Pi-hole with a static address, taking the link down also drops its default route: after the test, reboot it
+(or `ip route add default via <your router's IP>`), or it will be back on your network but without internet.
 
 **Test 2, only Pi-hole stops.** On pihole1: `systemctl stop pihole-FTL`. The health check fails 3 times
 (about 6 s), and pihole2 takes over. `systemctl start pihole-FTL` to bring it back.
