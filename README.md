@@ -20,6 +20,26 @@ Replace them with yours.
 - One free IP for the floating IP, **outside your router's DHCP range**.
 - Both on the same network (same subnet).
 
+## Before you start: log in with SSH
+From your Windows PC: Start menu → type `Terminal` → open it, then:
+```
+ssh root@10.37.0.41
+```
+The first time it asks if you trust the machine: type `yes`. Then the root password (nothing shows while you
+type). When the line ends with `#`, you're in.
+
+**Can't connect, or "Permission denied"?** Do this once on the Pi-hole itself (its own screen, or the Proxmox
+console), logged in as root:
+```bash
+apt install -y openssh-server
+systemctl enable --now ssh
+echo "PermitRootLogin yes" > /etc/ssh/sshd_config.d/10-root-login.conf
+systemctl restart ssh
+```
+The third line is needed because a fresh Debian doesn't let root log in over SSH with a password. If you'd rather
+not allow that, log in as your normal user instead (`ssh yourname@10.37.0.41`) and type `su -` (Ubuntu and
+Raspberry Pi OS: `sudo -i`) to become root.
+
 ## 1. Install keepalived (both Pi-holes)
 ```bash
 apt install -y keepalived
