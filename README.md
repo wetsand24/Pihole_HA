@@ -19,6 +19,7 @@ Replace them with yours.
 ## What you need
 - Two Pi-holes (v6) on **two separate machines**, each with a static IP and the same web password.
   Not set up yet? Follow [Pihole_Install](https://github.com/wetsand24/Pihole_Install) twice.
+- Each one: 512 MB RAM and 2 GB free disk (4 GB recommended).
 - One free IP for the floating IP, **outside your router's DHCP range**.
 - Both on the same network (same subnet).
 
